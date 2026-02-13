@@ -49,7 +49,7 @@ jobs:
           cd target/${{ matrix.target }}/release
           tar czf ../../../ff-${{ matrix.target }}.tar.gz ff
           cd ../../..
-          sha256sum ff-${{ matrix.target }}.tar.gz > ff-${{ matrix.target }}.tar.gz.sha256
+          shasum -a 256 ff-${{ matrix.target }}.tar.gz > ff-${{ matrix.target }}.tar.gz.sha256
 
       - name: Package (windows)
         if: matrix.archive == 'zip'
