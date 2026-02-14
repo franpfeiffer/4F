@@ -1,5 +1,6 @@
 use iced::widget::{button, checkbox, column, container, row, text, text_editor, text_input};
-use iced::{keyboard, window, Element, Fill, Font, Length, Subscription, Task, Theme};
+use iced::widget::text::Wrapping;
+use iced::{event, keyboard, window, Element, Event, Fill, Font, Length, Subscription, Task, Theme};
 use iced_aw::menu::{Item, Menu, MenuBar};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -13,6 +14,7 @@ fn main() -> iced::Result {
         .title(App::title)
         .theme(App::theme)
         .subscription(App::subscription)
+        .scale_factor(|app| app.scale)
         .default_font(Font::MONOSPACE)
         .window(window::Settings {
             size: iced::Size::new(800.0, 600.0),
@@ -33,6 +35,9 @@ struct App {
     goto_line: String,
     find_matches: Vec<(usize, usize)>,
     current_match: Option<usize>,
+    word_wrap: bool,
+    scale: f32,
+    ctrl_held: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -63,6 +68,11 @@ enum Message {
     ReplaceOne,
     ReplaceAll,
     GoToLineSubmit,
+    ToggleWordWrap,
+    ZoomIn,
+    ZoomOut,
+    CtrlPressed,
+    CtrlReleased,
 }
 
 impl App {
@@ -79,6 +89,9 @@ impl App {
                 goto_line: String::new(),
                 find_matches: Vec::new(),
                 current_match: None,
+                word_wrap: true,
+                scale: 1.0,
+                ctrl_held: false,
             },
             Task::none(),
         )
@@ -104,8 +117,30 @@ impl App {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        keyboard::listen().filter_map(|event| match event {
-            keyboard::Event::KeyPressed { key, modifiers, .. } => {
+        event::listen_with(|event, status, _window| {
+            match &event {
+                Event::Keyboard(keyboard::Event::KeyPressed { key: keyboard::Key::Named(keyboard::key::Named::Control), .. }) => {
+                    return Some(Message::CtrlPressed);
+                }
+                Event::Keyboard(keyboard::Event::KeyReleased { key: keyboard::Key::Named(keyboard::key::Named::Control), .. }) => {
+                    return Some(Message::CtrlReleased);
+                }
+                _ => {}
+            }
+
+            if let Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, physical_key, .. }) = event {
+                if modifiers.control() {
+                    match physical_key {
+                        keyboard::key::Physical::Code(keyboard::key::Code::Equal) => return Some(Message::ZoomIn),
+                        keyboard::key::Physical::Code(keyboard::key::Code::Minus) => return Some(Message::ZoomOut),
+                        _ => {}
+                    }
+                }
+
+                if matches!(status, event::Status::Captured) {
+                    return None;
+                }
+
                 if modifiers.control() && modifiers.shift() {
                     match key.as_ref() {
                         keyboard::Key::Character("S") => return Some(Message::SaveAs),
@@ -145,10 +180,9 @@ impl App {
                         return Some(Message::FindPrevious);
                     }
                 }
-
-                None
             }
-            _ => None,
+
+            None
         })
     }
 
@@ -288,9 +322,12 @@ impl App {
         ])
         .max_width(220.0);
 
+        let wrap_label = if self.word_wrap { "Word Wrap ✓" } else { "Word Wrap" };
         let format_menu = Menu::new(vec![
-            Item::new(menu_item_disabled("Word Wrap")),
-            Item::new(menu_item_disabled("Font...")),
+            Item::new(menu_item(wrap_label, "", Message::ToggleWordWrap)),
+            Item::new(separator()),
+            Item::new(menu_item("Zoom In", "Ctrl+=", Message::ZoomIn)),
+            Item::new(menu_item("Zoom Out", "Ctrl+-", Message::ZoomOut)),
         ])
         .max_width(220.0);
 
@@ -319,6 +356,11 @@ impl App {
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Edit(action) => {
+                if self.ctrl_held {
+                    if let text_editor::Action::Edit(text_editor::Edit::Insert(_)) = &action {
+                        return Task::none();
+                    }
+                }
                 let is_edit = action.is_edit();
                 self.content.perform(action);
                 if is_edit {
@@ -620,6 +662,26 @@ impl App {
                 }
                 Task::none()
             }
+            Message::ToggleWordWrap => {
+                self.word_wrap = !self.word_wrap;
+                Task::none()
+            }
+            Message::ZoomIn => {
+                self.scale = (self.scale + 0.1).min(3.0);
+                Task::none()
+            }
+            Message::ZoomOut => {
+                self.scale = (self.scale - 0.1).max(0.5);
+                Task::none()
+            }
+            Message::CtrlPressed => {
+                self.ctrl_held = true;
+                Task::none()
+            }
+            Message::CtrlReleased => {
+                self.ctrl_held = false;
+                Task::none()
+            }
         }
     }
 
@@ -630,9 +692,16 @@ impl App {
             col = col.push(self.search_panel());
         }
 
+        let wrapping = if self.word_wrap {
+            Wrapping::Word
+        } else {
+            Wrapping::None
+        };
+
         col = col.push(
             text_editor(&self.content)
                 .height(Fill)
+                .wrapping(wrapping)
                 .on_action(Message::Edit),
         );
 
