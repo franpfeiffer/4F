@@ -17,6 +17,11 @@ impl App {
                 Event::Keyboard(keyboard::Event::KeyReleased { key: keyboard::Key::Named(keyboard::key::Named::Control), .. }) => {
                     return Some(Message::CtrlReleased);
                 }
+                Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
+                    if !modifiers.control() {
+                        return Some(Message::CtrlReleased);
+                    }
+                }
                 _ => {}
             }
 

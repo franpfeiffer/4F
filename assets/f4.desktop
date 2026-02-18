@@ -1,7 +1,7 @@
 [Desktop Entry]
 Name=F4
 Comment=Simple text editor with Vim motions
-Exec=f4 %F
+Exec=/home/fran/.cargo/bin/f4 %F
 Icon=/home/fran/.local/share/icons/hicolor/256x256/apps/f4.png
 Terminal=false
 Type=Application

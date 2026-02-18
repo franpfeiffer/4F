@@ -34,6 +34,7 @@ impl App {
         let dialog = container(
             column![
                 text("F4").size(20),
+                text(concat!("v", env!("CARGO_PKG_VERSION"))).size(20),
                 text("A lightweight text editor").size(14),
                 text("Dunno what else to say...").size(14),
                 text("Built in rust btw").size(14),
