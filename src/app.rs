@@ -1,10 +1,10 @@
-use iced::widget::{column, stack, text_editor};
+use iced::widget::{canvas, column, stack, text_editor};
 use iced::widget::text::Wrapping;
-use iced::{Element, Fill, Task, Theme};
+use iced::{Color, Element, Fill, Point, Rectangle, Renderer, Size, Task, Theme};
 use std::path::PathBuf;
 
 use crate::highlight::{FindHighlightSettings, FindHighlighter, format_highlight};
-use crate::message::{Message, PendingAction};
+use crate::message::{Message, PendingAction, VimMode};
 
 pub struct App {
     pub content: text_editor::Content,
@@ -22,6 +22,9 @@ pub struct App {
     pub ctrl_held: bool,
     pub show_about: bool,
     pub pending_action: Option<PendingAction>,
+    pub vim_enabled: bool,
+    pub vim_mode: VimMode,
+    pub vim_pending: Option<char>,
 }
 
 impl App {
@@ -43,6 +46,9 @@ impl App {
                 ctrl_held: false,
                 show_about: false,
                 pending_action: None,
+                vim_enabled: false,
+                vim_mode: VimMode::Insert,
+                vim_pending: None,
             },
             Task::none(),
         )
@@ -103,12 +109,21 @@ impl App {
             .into();
 
         col = col.push(editor);
-
         col = col.push(self.status_bar());
 
-        let has_overlay = self.show_about || self.pending_action.is_some();
+        let show_block_cursor = self.vim_enabled && self.vim_mode == VimMode::Normal;
+
+        let has_overlay = self.show_about || self.pending_action.is_some() || show_block_cursor;
         if has_overlay {
             let mut layers = stack![col];
+            if show_block_cursor {
+                let cursor = self.content.cursor();
+                let line = cursor.position.line as f32;
+                let col_pos = cursor.position.column as f32;
+                layers = layers.push(
+                    canvas(BlockCursor { line, col_pos }).width(Fill).height(Fill)
+                );
+            }
             if self.show_about {
                 layers = layers.push(self.about_dialog());
             }
@@ -121,3 +136,47 @@ impl App {
         }
     }
 }
+
+struct BlockCursor {
+    line: f32,
+    col_pos: f32,
+}
+
+impl<Message> canvas::Program<Message> for BlockCursor {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &Self::State,
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: iced::mouse::Cursor,
+    ) -> Vec<canvas::Geometry> {
+        let mut frame = canvas::Frame::new(renderer, bounds.size());
+
+        let line_height = 20.0_f32;
+        let char_width = 8.6_f32;
+        let editor_padding = 5.0_f32;
+        let menu_bar_height = 29.0_f32;
+
+        let x = editor_padding + self.col_pos * char_width;
+        let y = menu_bar_height + editor_padding + self.line * line_height;
+
+        let block = Rectangle {
+            x,
+            y,
+            width: char_width,
+            height: line_height,
+        };
+
+        frame.fill_rectangle(
+            Point::new(block.x, block.y),
+            Size::new(block.width, block.height),
+            Color::from_rgba(1.0, 1.0, 1.0, 0.35),
+        );
+
+        vec![frame.into_geometry()]
+    }
+}
+

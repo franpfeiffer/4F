@@ -2,7 +2,7 @@ use iced::widget::{button, center, column, container, row, text};
 use iced::{Element, Length, Theme};
 
 use crate::app::App;
-use crate::message::Message;
+use crate::message::{Message, VimMode};
 
 impl App {
     pub fn status_bar(&self) -> Element<'_, Message> {
@@ -11,10 +11,25 @@ impl App {
         let col = cursor.position.column + 1;
         let lines = self.content.line_count();
         let zoom = (self.scale * 100.0).round() as u32;
+        let mode_row: Element<'_, Message> = if self.vim_enabled {
+            let mode_label = match self.vim_mode {
+                VimMode::Normal => "NORMAL",
+                VimMode::Insert => "INSERT",
+            };
+            row![
+                text(mode_label).size(12),
+                iced::widget::Space::new().width(20),
+                text(format!("Ln {}, Col {}", line, col)).size(12),
+            ]
+            .align_y(iced::Alignment::Center)
+            .into()
+        } else {
+            text(format!("Ln {}, Col {}", line, col)).size(12).into()
+        };
 
         container(
             row![
-                text(format!("Ln {}, Col {}", line, col)).size(12),
+                mode_row,
                 iced::widget::Space::new().width(Length::Fill),
                 text(format!("{} lines", lines)).size(12),
                 iced::widget::Space::new().width(20),

@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::app::App;
 use crate::format::format_document;
-use crate::message::{Message, PendingAction};
+use crate::message::{Message, PendingAction, VimMode};
 
 impl App {
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -12,6 +12,11 @@ impl App {
             Message::Edit(action) => {
                 if self.ctrl_held {
                     if let text_editor::Action::Edit(text_editor::Edit::Insert(_)) = &action {
+                        return Task::none();
+                    }
+                }
+                if self.vim_enabled && self.vim_mode == VimMode::Normal {
+                    if let text_editor::Action::Edit(_) = &action {
                         return Task::none();
                     }
                 }
@@ -339,6 +344,108 @@ impl App {
             }
             Message::ConfirmCancel => {
                 self.pending_action = None;
+                Task::none()
+            }
+            Message::ToggleVim => {
+                self.vim_enabled = !self.vim_enabled;
+                self.vim_mode = VimMode::Insert;
+                self.vim_pending = None;
+                Task::none()
+            }
+            Message::VimEnterNormal => {
+                self.vim_mode = VimMode::Normal;
+                self.vim_pending = None;
+                if self.show_panel {
+                    self.show_panel = false;
+                    self.find_matches.clear();
+                    self.current_match = None;
+                }
+                Task::none()
+            }
+            Message::VimEnterInsert => {
+                self.vim_mode = VimMode::Insert;
+                Task::none()
+            }
+            Message::VimEnterInsertAppend => {
+                self.vim_mode = VimMode::Insert;
+                self.content.perform(text_editor::Action::Move(text_editor::Motion::Right));
+                Task::none()
+            }
+            Message::VimEnterInsertLineStart => {
+                self.vim_mode = VimMode::Insert;
+                self.content.perform(text_editor::Action::Move(text_editor::Motion::Home));
+                Task::none()
+            }
+            Message::VimEnterInsertLineEnd => {
+                self.vim_mode = VimMode::Insert;
+                self.content.perform(text_editor::Action::Move(text_editor::Motion::End));
+                Task::none()
+            }
+            Message::VimEnterInsertNewlineBelow => {
+                self.vim_mode = VimMode::Insert;
+                self.content.perform(text_editor::Action::Move(text_editor::Motion::End));
+                self.content.perform(text_editor::Action::Edit(text_editor::Edit::Enter));
+                self.is_modified = true;
+                Task::none()
+            }
+            Message::VimEnterInsertNewlineAbove => {
+                self.vim_mode = VimMode::Insert;
+                self.content.perform(text_editor::Action::Move(text_editor::Motion::Home));
+                self.content.perform(text_editor::Action::Edit(text_editor::Edit::Enter));
+                self.content.perform(text_editor::Action::Move(text_editor::Motion::Up));
+                self.is_modified = true;
+                Task::none()
+            }
+            Message::VimKey(c) => {
+                match c {
+                    'h' => {
+                        self.vim_pending = None;
+                        self.content.perform(text_editor::Action::Move(text_editor::Motion::Left));
+                    }
+                    'j' => {
+                        self.vim_pending = None;
+                        self.content.perform(text_editor::Action::Move(text_editor::Motion::Down));
+                    }
+                    'k' => {
+                        self.vim_pending = None;
+                        self.content.perform(text_editor::Action::Move(text_editor::Motion::Up));
+                    }
+                    'l' => {
+                        self.vim_pending = None;
+                        self.content.perform(text_editor::Action::Move(text_editor::Motion::Right));
+                    }
+                    '0' => {
+                        self.vim_pending = None;
+                        self.content.perform(text_editor::Action::Move(text_editor::Motion::Home));
+                    }
+                    '$' => {
+                        self.vim_pending = None;
+                        self.content.perform(text_editor::Action::Move(text_editor::Motion::End));
+                    }
+                    'w' | 'e' => {
+                        self.vim_pending = None;
+                        self.content.perform(text_editor::Action::Move(text_editor::Motion::WordRight));
+                    }
+                    'b' => {
+                        self.vim_pending = None;
+                        self.content.perform(text_editor::Action::Move(text_editor::Motion::WordLeft));
+                    }
+                    'g' => {
+                        if self.vim_pending == Some('g') {
+                            self.vim_pending = None;
+                            self.content.perform(text_editor::Action::Move(text_editor::Motion::DocumentStart));
+                        } else {
+                            self.vim_pending = Some('g');
+                        }
+                    }
+                    'G' => {
+                        self.vim_pending = None;
+                        self.content.perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
+                    }
+                    _ => {
+                        self.vim_pending = None;
+                    }
+                }
                 Task::none()
             }
         }

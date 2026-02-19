@@ -8,6 +8,12 @@ pub enum PendingAction {
     Exit,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum VimMode {
+    Normal,
+    Insert,
+}
+
 #[derive(Debug, Clone)]
 pub enum Message {
     Edit(text_editor::Action),
@@ -47,4 +53,13 @@ pub enum Message {
     ConfirmSave,
     ConfirmDiscard,
     ConfirmCancel,
+    VimKey(char),
+    VimEnterInsert,
+    VimEnterInsertAppend,
+    VimEnterInsertLineStart,
+    VimEnterInsertLineEnd,
+    VimEnterInsertNewlineBelow,
+    VimEnterInsertNewlineAbove,
+    VimEnterNormal,
+    ToggleVim,
 }

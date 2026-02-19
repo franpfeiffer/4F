@@ -44,8 +44,11 @@ impl App {
         ])
         .max_width(220.0);
 
+        let vim_label = if self.vim_enabled { "Vim Mode ✓" } else { "Vim Mode" };
         let view_menu = Menu::new(vec![
             Item::new(menu_item_disabled("Status Bar")),
+            Item::new(separator()),
+            Item::new(menu_item(vim_label, "F6", Message::ToggleVim)),
         ])
         .max_width(220.0);
 
