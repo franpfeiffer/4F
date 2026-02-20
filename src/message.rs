@@ -18,6 +18,13 @@ pub enum VimMode {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum LineNumbers {
+    None,
+    Absolute,
+    Relative,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum VimPending {
     G,
     TextObjectModifier(char),
@@ -79,4 +86,5 @@ pub enum Message {
     VimCommandChanged(String),
     VimCommandSubmit,
     ToggleVim,
+    ToggleLineNumbers,
 }

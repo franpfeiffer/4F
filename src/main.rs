@@ -1,4 +1,5 @@
 mod app;
+mod cursor_editor;
 mod format;
 mod highlight;
 mod menu;

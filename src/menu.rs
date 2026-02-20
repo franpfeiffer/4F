@@ -3,7 +3,7 @@ use iced::{Element, Length, Theme};
 use iced_aw::menu::{Item, Menu, MenuBar};
 
 use crate::app::App;
-use crate::message::Message;
+use crate::message::{LineNumbers, Message};
 
 impl App {
     pub fn menu_bar(&self) -> Element<'_, Message> {
@@ -45,12 +45,19 @@ impl App {
         .max_width(220.0);
 
         let vim_label = if self.vim_enabled { "Vim Mode ✓" } else { "Vim Mode" };
+        let ln_label = match self.line_numbers {
+            LineNumbers::None => "Line Numbers",
+            LineNumbers::Absolute => "Line Numbers: Absolute ✓",
+            LineNumbers::Relative => "Line Numbers: Relative ✓",
+        };
         let view_menu = Menu::new(vec![
             Item::new(menu_item_disabled("Status Bar")),
             Item::new(separator()),
             Item::new(menu_item(vim_label, "F6", Message::ToggleVim)),
+            Item::new(separator()),
+            Item::new(menu_item(ln_label, "", Message::ToggleLineNumbers)),
         ])
-        .max_width(220.0);
+        .max_width(250.0);
 
         let help_menu = Menu::new(vec![
             Item::new(menu_item("About F4", "", Message::ShowAbout)),

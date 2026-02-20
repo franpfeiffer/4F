@@ -1,11 +1,12 @@
-use iced::widget::{column, stack, text_editor};
+use iced::widget::{column, container, row, stack, text, text_editor};
 use iced::widget::text::Wrapping;
 use iced::{Element, Fill, Task, Theme};
 use iced::widget;
 use std::path::PathBuf;
 
+use crate::cursor_editor::CursorEditor;
 use crate::highlight::{FindHighlightSettings, FindHighlighter, format_highlight};
-use crate::message::{Message, PendingAction, VimMode, VimPending};
+use crate::message::{LineNumbers, Message, PendingAction, VimMode, VimPending};
 
 pub const EDITOR_ID: widget::Id = widget::Id::new("editor");
 
@@ -36,6 +37,7 @@ pub struct App {
     pub vim_visual_anchor: Option<(usize, usize)>,
     pub vim_visual_head: (usize, usize),
     pub vim_col: usize,
+    pub line_numbers: LineNumbers,
 }
 
 impl App {
@@ -68,6 +70,7 @@ impl App {
                 vim_visual_anchor: None,
                 vim_visual_head: (0, 0),
                 vim_col: 0,
+                line_numbers: LineNumbers::None,
             },
             Task::none(),
         )
@@ -127,12 +130,9 @@ impl App {
                 }
                 text_editor::Binding::from_key_press(key_press)
             })
-            .style(move |theme: &Theme, status| {
+            .style(|theme: &Theme, status| {
                 let mut style = text_editor::default(theme, status);
                 style.border.width = 0.0;
-                if vim_normal_or_visual {
-                    style.selection = iced::Color::from_rgb(0.5, 0.5, 0.5);
-                }
                 style
             });
 
@@ -148,7 +148,65 @@ impl App {
             )
             .into();
 
-        let editor_area: Element<'_, Message> = editor;
+        let show_block = self.vim_enabled && matches!(
+            self.vim_mode,
+            VimMode::Normal | VimMode::Visual | VimMode::VisualLine
+        );
+        let cursor = self.content.cursor();
+        let current_line = cursor.position.line;
+        let editor_widget: Element<'_, Message> = CursorEditor::new(
+            editor,
+            current_line,
+            self.vim_col,
+            show_block,
+        ).into();
+
+        let editor_area: Element<'_, Message> = if self.line_numbers != LineNumbers::None {
+            let total = self.content.line_count();
+            let last_line_empty = self.content.line(total.saturating_sub(1))
+                .map(|l| l.text.is_empty())
+                .unwrap_or(true);
+            let line_count = if last_line_empty && total > 1 { total - 1 } else { total };
+            let font_size = 16.0_f32;
+            let line_height = font_size * 1.3;
+            let gutter_col = (0..line_count).fold(
+                column![].spacing(0),
+                |col, i| {
+                    let n = match self.line_numbers {
+                        LineNumbers::Absolute => i + 1,
+                        LineNumbers::Relative => {
+                            if i == current_line { i + 1 } else { (i as isize - current_line as isize).unsigned_abs() }
+                        }
+                        LineNumbers::None => unreachable!(),
+                    };
+                    let color = if i == current_line {
+                        iced::Color::from_rgb(0.7, 0.7, 0.7)
+                    } else {
+                        iced::Color::from_rgb(0.4, 0.4, 0.4)
+                    };
+                    col.push(
+                        container(
+                            text(format!("{:>4}", n))
+                                .size(font_size)
+                                .font(iced::Font::MONOSPACE)
+                                .style(move |_: &Theme| text::Style { color: Some(color) })
+                        )
+                        .height(line_height)
+                        .align_y(iced::Alignment::Center)
+                    )
+                }
+            );
+            let gutter: Element<'_, Message> = container(gutter_col)
+                .padding([5, 4])
+                .style(|theme: &Theme| container::Style {
+                    background: Some(theme.extended_palette().background.weak.color.into()),
+                    ..Default::default()
+                })
+                .into();
+            row![gutter, editor_widget].into()
+        } else {
+            editor_widget
+        };
 
         col = col.push(editor_area);
         if self.vim_enabled && self.vim_mode == VimMode::Command {

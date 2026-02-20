@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::app::{App, EDITOR_ID};
 use crate::format::format_document;
-use crate::message::{Message, PendingAction, VimMode, VimPending};
+use crate::message::{LineNumbers, Message, PendingAction, VimMode, VimPending};
 use crate::subscription::COMMAND_INPUT_ID;
 
 impl App {
@@ -183,32 +183,19 @@ impl App {
     }
 
     fn vim_move_to_with_block(&mut self, line: usize, col: usize) {
-        // col is a char index; move_to also uses char indices
         let text = self.content.text();
-        let line_str = text.lines().nth(line).unwrap_or("");
-        let char_count = line_str.chars().count();
-        // always move to clear any old selection first
-        self.content.move_to(text_editor::Cursor {
-            position: text_editor::Position { line, column: 0 },
-            selection: None,
-        });
-        if char_count == 0 {
-            return;
-        }
-        let col = col.min(char_count.saturating_sub(1));
-        let sel_col = (col + 1).min(char_count);
+        let char_count = text.lines().nth(line).map(|l| l.chars().count()).unwrap_or(0);
+        let col = if char_count == 0 { 0 } else { col.min(char_count.saturating_sub(1)) };
+        self.vim_col = col;
         self.content.move_to(text_editor::Cursor {
             position: text_editor::Position { line, column: col },
-            selection: Some(text_editor::Position { line, column: sel_col }),
+            selection: None,
         });
     }
 
     fn vim_apply_block_cursor(&mut self) {
         let cursor = self.content.cursor();
-        let line = cursor.position.line;
-        let col = cursor.position.column;
-        self.vim_col = col;
-        self.vim_move_to_with_block(line, col);
+        self.vim_col = cursor.position.column;
     }
 
     fn vim_normal_move(&mut self, c: char, count: usize) {
@@ -261,21 +248,12 @@ impl App {
                 self.vim_move_to_with_block(max_line, 0);
             }
             'w' | 'e' => {
-                let mut cur_line = line;
-                let mut col = cursor.position.column;
                 for _ in 0..count {
-                    let chars = match lines.get(cur_line) { Some(v) => v, None => break };
-                    let mut i = col;
-                    while i < chars.len() && is_word(chars[i]) { i += 1; }
-                    while i < chars.len() && !is_word(chars[i]) { i += 1; }
-                    if i >= chars.len() && cur_line < max_line {
-                        cur_line += 1; col = 0;
-                    } else {
-                        col = i;
-                    }
+                    self.content.perform(text_editor::Action::Move(text_editor::Motion::WordRight));
                 }
-                self.vim_col = col;
-                self.vim_move_to_with_block(cur_line, col);
+                let c = self.content.cursor();
+                self.vim_col = c.position.column;
+                self.vim_move_to_with_block(c.position.line, c.position.column);
             }
             'b' => {
                 let mut cur_line = line;
@@ -809,6 +787,14 @@ impl App {
                 self.pending_action = None;
                 Task::none()
             }
+            Message::ToggleLineNumbers => {
+                self.line_numbers = match self.line_numbers {
+                    LineNumbers::None => LineNumbers::Absolute,
+                    LineNumbers::Absolute => LineNumbers::Relative,
+                    LineNumbers::Relative => LineNumbers::None,
+                };
+                Task::none()
+            }
             Message::ToggleVim => {
                 self.vim_enabled = !self.vim_enabled;
                 self.vim_mode = VimMode::Insert;
@@ -957,16 +943,17 @@ impl App {
                         }
                         'w' | 'e' => {
                             for _ in 0..count {
-                                let line = lines.get(hl).unwrap_or(&"");
-                                let chars: Vec<char> = line.chars().collect();
+                                let chars: Vec<char> = lines.get(hl).unwrap_or(&"").chars().collect();
                                 let mut i = hc;
                                 while i < chars.len() && chars[i].is_alphanumeric() { i += 1; }
-                                while i < chars.len() && !chars[i].is_alphanumeric() { i += 1; }
-                                if i >= chars.len() && hl + 1 < lines.len() {
-                                    hl += 1; hc = 0;
-                                } else {
-                                    hc = i;
+                                loop {
+                                    while i < chars.len() && !chars[i].is_alphanumeric() { i += 1; }
+                                    if i < chars.len() { break; }
+                                    if hl + 1 >= lines.len() { break; }
+                                    hl += 1; i = 0;
+                                    if lines.get(hl).and_then(|l| l.chars().next()).map(|c| c.is_alphanumeric()).unwrap_or(false) { break; }
                                 }
+                                hc = i;
                             }
                             true
                         }
