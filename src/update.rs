@@ -182,8 +182,192 @@ impl App {
         None
     }
 
+    fn vim_move_to_with_block(&mut self, line: usize, col: usize) {
+        // col is a char index; move_to also uses char indices
+        let text = self.content.text();
+        let line_str = text.lines().nth(line).unwrap_or("");
+        let char_count = line_str.chars().count();
+        // always move to clear any old selection first
+        self.content.move_to(text_editor::Cursor {
+            position: text_editor::Position { line, column: 0 },
+            selection: None,
+        });
+        if char_count == 0 {
+            return;
+        }
+        let col = col.min(char_count.saturating_sub(1));
+        let sel_col = (col + 1).min(char_count);
+        self.content.move_to(text_editor::Cursor {
+            position: text_editor::Position { line, column: col },
+            selection: Some(text_editor::Position { line, column: sel_col }),
+        });
+    }
+
+    fn vim_apply_block_cursor(&mut self) {
+        let cursor = self.content.cursor();
+        let line = cursor.position.line;
+        let col = cursor.position.column;
+        self.vim_col = col;
+        self.vim_move_to_with_block(line, col);
+    }
+
+    fn vim_normal_move(&mut self, c: char, count: usize) {
+        let text = self.content.text();
+        let lines: Vec<Vec<char>> = text.lines().map(|l| l.chars().collect()).collect();
+        let max_line = lines.len().saturating_sub(1);
+        let cursor = self.content.cursor();
+        let line = cursor.position.line.min(max_line);
+
+        let char_count = |l: usize| lines.get(l).map(|v| v.len()).unwrap_or(0);
+        let is_word = |c: char| c.is_alphanumeric() || c == '_';
+
+        match c {
+            'j' | 'k' => {
+                // use sticky col, clamp to new line length
+                let new_line = if c == 'j' {
+                    (line + count).min(max_line)
+                } else {
+                    line.saturating_sub(count)
+                };
+                let len = char_count(new_line);
+                let col = if len == 0 { 0 } else { self.vim_col.min(len.saturating_sub(1)) };
+                self.vim_move_to_with_block(new_line, col);
+                // don't update vim_col — preserve it
+            }
+            'h' => {
+                let cur_col = cursor.position.column;
+                let col = cur_col.saturating_sub(count);
+                self.vim_col = col;
+                self.vim_move_to_with_block(line, col);
+            }
+            'l' => {
+                let cur_col = cursor.position.column;
+                let len = char_count(line);
+                let col = if len == 0 { 0 } else { (cur_col + count).min(len.saturating_sub(1)) };
+                self.vim_col = col;
+                self.vim_move_to_with_block(line, col);
+            }
+            '0' => {
+                self.vim_col = 0;
+                self.vim_move_to_with_block(line, 0);
+            }
+            '$' => {
+                let col = char_count(line).saturating_sub(1);
+                self.vim_col = col;
+                self.vim_move_to_with_block(line, col);
+            }
+            'G' => {
+                self.vim_col = 0;
+                self.vim_move_to_with_block(max_line, 0);
+            }
+            'w' | 'e' => {
+                let mut cur_line = line;
+                let mut col = cursor.position.column;
+                for _ in 0..count {
+                    let chars = match lines.get(cur_line) { Some(v) => v, None => break };
+                    let mut i = col;
+                    while i < chars.len() && is_word(chars[i]) { i += 1; }
+                    while i < chars.len() && !is_word(chars[i]) { i += 1; }
+                    if i >= chars.len() && cur_line < max_line {
+                        cur_line += 1; col = 0;
+                    } else {
+                        col = i;
+                    }
+                }
+                self.vim_col = col;
+                self.vim_move_to_with_block(cur_line, col);
+            }
+            'b' => {
+                let mut cur_line = line;
+                let mut col = cursor.position.column;
+                for _ in 0..count {
+                    let chars = match lines.get(cur_line) { Some(v) => v, None => break };
+                    let mut i = col;
+                    if i > 0 { i -= 1; }
+                    while i > 0 && !is_word(chars[i]) { i -= 1; }
+                    while i > 0 && is_word(chars[i - 1]) { i -= 1; }
+                    col = i;
+                }
+                self.vim_col = col;
+                self.vim_move_to_with_block(cur_line, col);
+            }
+            _ => {}
+        }
+    }
+
     fn vim_reset_pending(&mut self) {
         self.vim_count = String::new();
+    }
+
+    fn vim_visual_selected_text(&self, head_line: usize, head_col: usize) -> String {
+        let Some((anchor_line, anchor_col)) = self.vim_visual_anchor else { return String::new() };
+        let text = self.content.text();
+        let lines: Vec<&str> = text.lines().collect();
+
+        if self.vim_mode == VimMode::VisualLine {
+            let (start, end) = if anchor_line <= head_line {
+                (anchor_line, head_line)
+            } else {
+                (head_line, anchor_line)
+            };
+            lines[start..=end.min(lines.len().saturating_sub(1))].join("\n") + "\n"
+        } else {
+            let ((sl, sc), (el, ec)) = if (anchor_line, anchor_col) <= (head_line, head_col) {
+                ((anchor_line, anchor_col), (head_line, head_col))
+            } else {
+                ((head_line, head_col), (anchor_line, anchor_col))
+            };
+            if sl == el {
+                lines.get(sl).map(|l| {
+                    let chars: Vec<char> = l.chars().collect();
+                    chars[sc..=(ec.min(chars.len().saturating_sub(1)))].iter().collect()
+                }).unwrap_or_default()
+            } else {
+                let mut result = String::new();
+                for l in sl..=el.min(lines.len().saturating_sub(1)) {
+                    let line = lines.get(l).unwrap_or(&"");
+                    let chars: Vec<char> = line.chars().collect();
+                    if l == sl {
+                        result.push_str(&chars[sc..].iter().collect::<String>());
+                        result.push('\n');
+                    } else if l == el {
+                        result.push_str(&chars[..=ec.min(chars.len().saturating_sub(1))].iter().collect::<String>());
+                    } else {
+                        result.push_str(line);
+                        result.push('\n');
+                    }
+                }
+                result
+            }
+        }
+    }
+
+    fn vim_visual_apply_selection(&mut self, head_line: usize, head_col: usize) {
+        let Some((anchor_line, anchor_col)) = self.vim_visual_anchor else { return };
+        let text = self.content.text();
+        let lines: Vec<&str> = text.lines().collect();
+        let max_line = lines.len().saturating_sub(1);
+        let anchor_line = anchor_line.min(max_line);
+        let head_line = head_line.min(max_line);
+
+        let line_end_col = |l: usize| lines.get(l).map(|s| s.chars().count()).unwrap_or(0);
+
+        if self.vim_mode == VimMode::VisualLine {
+            let (start_line, end_line) = if anchor_line <= head_line {
+                (anchor_line, head_line)
+            } else {
+                (head_line, anchor_line)
+            };
+            self.content.move_to(text_editor::Cursor {
+                position: text_editor::Position { line: start_line, column: 0 },
+                selection: Some(text_editor::Position { line: end_line, column: line_end_col(end_line) }),
+            });
+        } else {
+            self.content.move_to(text_editor::Cursor {
+                position: text_editor::Position { line: head_line, column: head_col },
+                selection: Some(text_editor::Position { line: anchor_line, column: anchor_col }),
+            });
+        }
     }
 
     fn vim_do_find_char(&mut self, ch: char, forward: bool, inclusive: bool, _count: usize) {
@@ -302,6 +486,10 @@ impl App {
                     if self.show_panel {
                         self.find_all_matches();
                     }
+                }
+                if self.vim_enabled && self.vim_mode == VimMode::Normal {
+                    self.vim_apply_block_cursor();
+                    return operation::focus(EDITOR_ID);
                 }
                 Task::none()
             }
@@ -628,6 +816,8 @@ impl App {
                 self.vim_count = String::new();
                 self.vim_operator = None;
                 self.vim_command = String::new();
+                self.vim_visual_anchor = None;
+                self.vim_visual_head = (0, 0);
                 Task::none()
             }
             Message::VimEnterNormal => {
@@ -636,12 +826,37 @@ impl App {
                 self.vim_count = String::new();
                 self.vim_operator = None;
                 self.vim_command = String::new();
+                self.vim_visual_anchor = None;
+                self.vim_visual_head = (0, 0);
                 if self.show_panel {
                     self.show_panel = false;
                     self.find_matches.clear();
                     self.current_match = None;
                 }
-                Task::none()
+                self.vim_apply_block_cursor();
+                operation::focus(EDITOR_ID)
+            }
+            Message::VimEnterVisual => {
+                let cursor = self.content.cursor();
+                let (line, col) = (cursor.position.line, cursor.position.column);
+                self.vim_mode = VimMode::Visual;
+                self.vim_visual_anchor = Some((line, col));
+                self.vim_visual_head = (line, col);
+                self.vim_count = String::new();
+                self.vim_operator = None;
+                self.vim_visual_apply_selection(line, col);
+                operation::focus(EDITOR_ID)
+            }
+            Message::VimEnterVisualLine => {
+                let cursor = self.content.cursor();
+                let (line, col) = (cursor.position.line, cursor.position.column);
+                self.vim_mode = VimMode::VisualLine;
+                self.vim_visual_anchor = Some((line, col));
+                self.vim_visual_head = (line, col);
+                self.vim_count = String::new();
+                self.vim_operator = None;
+                self.vim_visual_apply_selection(line, col);
+                operation::focus(EDITOR_ID)
             }
             Message::VimEnterCommand => {
                 self.vim_mode = VimMode::Command;
@@ -707,6 +922,119 @@ impl App {
             Message::VimKey(c) => {
                 let count = self.vim_count.parse::<usize>().unwrap_or(1);
 
+                if self.vim_mode == VimMode::Visual || self.vim_mode == VimMode::VisualLine {
+                    let text = self.content.text();
+                    let lines: Vec<&str> = text.lines().collect();
+                    let (mut hl, mut hc) = self.vim_visual_head;
+
+                    let moved = match c {
+                        'h' => { for _ in 0..count { if hc > 0 { hc -= 1; } } true }
+                        'l' => {
+                            for _ in 0..count {
+                                let len = lines.get(hl).map(|l| l.chars().count()).unwrap_or(0);
+                                if hc < len { hc += 1; }
+                            }
+                            true
+                        }
+                        'j' => {
+                            for _ in 0..count {
+                                if hl + 1 < lines.len() { hl += 1; }
+                            }
+                            let len = lines.get(hl).map(|l| l.chars().count()).unwrap_or(0);
+                            hc = hc.min(len);
+                            true
+                        }
+                        'k' => {
+                            for _ in 0..count { hl = hl.saturating_sub(1); }
+                            let len = lines.get(hl).map(|l| l.chars().count()).unwrap_or(0);
+                            hc = hc.min(len);
+                            true
+                        }
+                        '0' => { hc = 0; true }
+                        '$' => {
+                            hc = lines.get(hl).map(|l| l.chars().count().saturating_sub(1)).unwrap_or(0);
+                            true
+                        }
+                        'w' | 'e' => {
+                            for _ in 0..count {
+                                let line = lines.get(hl).unwrap_or(&"");
+                                let chars: Vec<char> = line.chars().collect();
+                                let mut i = hc;
+                                while i < chars.len() && chars[i].is_alphanumeric() { i += 1; }
+                                while i < chars.len() && !chars[i].is_alphanumeric() { i += 1; }
+                                if i >= chars.len() && hl + 1 < lines.len() {
+                                    hl += 1; hc = 0;
+                                } else {
+                                    hc = i;
+                                }
+                            }
+                            true
+                        }
+                        'b' => {
+                            for _ in 0..count {
+                                let line = lines.get(hl).unwrap_or(&"");
+                                let chars: Vec<char> = line.chars().collect();
+                                let mut i = hc;
+                                if i > 0 { i -= 1; }
+                                while i > 0 && !chars[i].is_alphanumeric() { i -= 1; }
+                                while i > 0 && chars[i - 1].is_alphanumeric() { i -= 1; }
+                                hc = i;
+                            }
+                            true
+                        }
+                        'G' => { hl = lines.len().saturating_sub(1); hc = 0; true }
+                        'g' => {
+                            if self.vim_pending == Some(VimPending::G) {
+                                self.vim_pending = None;
+                                hl = 0; hc = 0;
+                                self.vim_visual_head = (hl, hc);
+                                self.vim_visual_apply_selection(hl, hc);
+                                self.vim_count = String::new();
+                            } else {
+                                self.vim_pending = Some(VimPending::G);
+                            }
+                            return Task::none();
+                        }
+                        _ => false,
+                    };
+
+                    if moved {
+                        self.vim_visual_head = (hl, hc);
+                        self.vim_visual_apply_selection(hl, hc);
+                        self.vim_count = String::new();
+                        return Task::none();
+                    }
+
+                    match c {
+                        'y' => {
+                            self.vim_register = self.vim_visual_selected_text(hl, hc);
+                            self.vim_visual_apply_selection(hl, hc);
+                            self.vim_mode = VimMode::Normal;
+                            self.vim_visual_anchor = None;
+                        }
+                        'd' | 'x' => {
+                            self.vim_register = self.vim_visual_selected_text(hl, hc);
+                            self.vim_visual_apply_selection(hl, hc);
+                            self.content.perform(text_editor::Action::Edit(text_editor::Edit::Delete));
+                            self.vim_mode = VimMode::Normal;
+                            self.vim_visual_anchor = None;
+                            self.is_modified = true;
+                        }
+                        'c' => {
+                            self.vim_register = self.vim_visual_selected_text(hl, hc);
+                            self.vim_visual_apply_selection(hl, hc);
+                            self.content.perform(text_editor::Action::Edit(text_editor::Edit::Delete));
+                            self.vim_mode = VimMode::Insert;
+                            self.vim_visual_anchor = None;
+                            self.is_modified = true;
+                            return operation::focus(EDITOR_ID);
+                        }
+                        _ => {}
+                    }
+                    self.vim_count = String::new();
+                    return Task::none();
+                }
+
                 if let Some(VimPending::ReplaceChar) = self.vim_pending.take() {
                     self.vim_count = String::new();
                     self.vim_operator = None;
@@ -743,31 +1071,31 @@ impl App {
 
                 match c {
                     'h' | 'j' | 'k' | 'l' | 'w' | 'e' | 'b' | '0' | '$' | 'G' => {
-                        let motion = match c {
-                            'h' => text_editor::Motion::Left,
-                            'j' => text_editor::Motion::Down,
-                            'k' => text_editor::Motion::Up,
-                            'l' => text_editor::Motion::Right,
-                            'w' | 'e' => text_editor::Motion::WordRight,
-                            'b' => text_editor::Motion::WordLeft,
-                            '0' => text_editor::Motion::Home,
-                            '$' => text_editor::Motion::End,
-                            'G' => text_editor::Motion::DocumentEnd,
-                            _ => unreachable!(),
-                        };
                         if let Some(op) = self.vim_operator.take() {
+                            let motion = match c {
+                                'h' => text_editor::Motion::Left,
+                                'j' => text_editor::Motion::Down,
+                                'k' => text_editor::Motion::Up,
+                                'l' => text_editor::Motion::Right,
+                                'w' | 'e' => text_editor::Motion::WordRight,
+                                'b' => text_editor::Motion::WordLeft,
+                                '0' => text_editor::Motion::Home,
+                                '$' => text_editor::Motion::End,
+                                'G' => text_editor::Motion::DocumentEnd,
+                                _ => unreachable!(),
+                            };
                             self.vim_do_motion_op(op, motion, count);
                         } else {
-                            for _ in 0..count {
-                                self.content.perform(text_editor::Action::Move(motion));
-                            }
+                            self.vim_normal_move(c, count);
                         }
                     }
                     'g' => {
                         if self.vim_pending == Some(VimPending::G) {
                             self.vim_pending = None;
                             self.vim_operator = None;
-                            self.content.perform(text_editor::Action::Move(text_editor::Motion::DocumentStart));
+                            self.vim_normal_move('G', 1);
+                            // gg goes to top not bottom — fix line to 0
+                            self.vim_move_to_with_block(0, 0);
                         } else {
                             self.vim_pending = Some(VimPending::G);
                             return Task::none();
@@ -994,6 +1322,9 @@ impl App {
                 }
                 self.vim_count = String::new();
                 if self.vim_mode == VimMode::Insert {
+                    operation::focus(EDITOR_ID)
+                } else if self.vim_mode == VimMode::Normal {
+                    self.vim_apply_block_cursor();
                     operation::focus(EDITOR_ID)
                 } else {
                     Task::none()

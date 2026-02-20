@@ -1,6 +1,6 @@
-use iced::widget::{canvas, column, stack, text_editor};
+use iced::widget::{column, stack, text_editor};
 use iced::widget::text::Wrapping;
-use iced::{Color, Element, Fill, Point, Rectangle, Renderer, Size, Task, Theme};
+use iced::{Element, Fill, Task, Theme};
 use iced::widget;
 use std::path::PathBuf;
 
@@ -33,6 +33,9 @@ pub struct App {
     pub vim_register: String,
     pub vim_find_last: Option<(char, bool, bool)>,
     pub vim_command: String,
+    pub vim_visual_anchor: Option<(usize, usize)>,
+    pub vim_visual_head: (usize, usize),
+    pub vim_col: usize,
 }
 
 impl App {
@@ -62,6 +65,9 @@ impl App {
                 vim_register: String::new(),
                 vim_find_last: None,
                 vim_command: String::new(),
+                vim_visual_anchor: None,
+                vim_visual_head: (0, 0),
+                vim_col: 0,
             },
             Task::none(),
         )
@@ -99,14 +105,34 @@ impl App {
             Wrapping::None
         };
 
+        let vim_normal_or_visual = self.vim_enabled && matches!(
+            self.vim_mode,
+            VimMode::Normal | VimMode::Visual | VimMode::VisualLine
+        );
+
         let editor = text_editor(&self.content)
             .id(EDITOR_ID)
             .height(Fill)
             .wrapping(wrapping)
             .on_action(Message::Edit)
-            .style(|theme: &Theme, status| {
+            .key_binding(move |key_press| {
+                if vim_normal_or_visual {
+                    if matches!(
+                        key_press.key,
+                        iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape)
+                    ) {
+                        return None;
+                    }
+                    return None;
+                }
+                text_editor::Binding::from_key_press(key_press)
+            })
+            .style(move |theme: &Theme, status| {
                 let mut style = text_editor::default(theme, status);
                 style.border.width = 0.0;
+                if vim_normal_or_visual {
+                    style.selection = iced::Color::from_rgb(0.5, 0.5, 0.5);
+                }
                 style
             });
 
@@ -122,20 +148,7 @@ impl App {
             )
             .into();
 
-        let show_block_cursor = self.vim_enabled && self.vim_mode == VimMode::Normal;
-
-        let editor_area: Element<'_, Message> = if show_block_cursor {
-            let cursor = self.content.cursor();
-            let line = cursor.position.line as f32;
-            let col_pos = cursor.position.column as f32;
-            stack![
-                editor,
-                canvas(BlockCursor { line, col_pos }).width(Fill).height(Fill)
-            ]
-            .into()
-        } else {
-            editor
-        };
+        let editor_area: Element<'_, Message> = editor;
 
         col = col.push(editor_area);
         if self.vim_enabled && self.vim_mode == VimMode::Command {
@@ -160,45 +173,4 @@ impl App {
     }
 }
 
-struct BlockCursor {
-    line: f32,
-    col_pos: f32,
-}
-
-impl<Message> canvas::Program<Message> for BlockCursor {
-    type State = ();
-
-    fn draw(
-        &self,
-        _state: &Self::State,
-        renderer: &Renderer,
-        _theme: &Theme,
-        bounds: Rectangle,
-        _cursor: iced::mouse::Cursor,
-    ) -> Vec<canvas::Geometry> {
-        let mut frame = canvas::Frame::new(renderer, bounds.size());
-
-        let line_height = 20.8_f32;
-        let char_width = 9.6_f32;
-        let editor_padding = 5.0_f32;
-
-        let x = editor_padding + self.col_pos * char_width;
-        let y = editor_padding + self.line * line_height;
-
-        let block = Rectangle {
-            x,
-            y,
-            width: char_width,
-            height: line_height - 1.0,
-        };
-
-        frame.fill_rectangle(
-            Point::new(block.x, block.y),
-            Size::new(block.width, block.height),
-            Color::from_rgba(1.0, 1.0, 1.0, 0.35),
-        );
-
-        vec![frame.into_geometry()]
-    }
-}
 

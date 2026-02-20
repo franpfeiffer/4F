@@ -47,6 +47,8 @@ impl App {
                 VimMode::Normal => "NORMAL",
                 VimMode::Insert => "INSERT",
                 VimMode::Command => "COMMAND",
+                VimMode::Visual => "VISUAL",
+                VimMode::VisualLine => "VISUAL LINE",
             };
             row![
                 text(mode_label).size(12),

@@ -13,6 +13,8 @@ pub enum VimMode {
     Normal,
     Insert,
     Command,
+    Visual,
+    VisualLine,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -71,6 +73,8 @@ pub enum Message {
     VimEnterInsertNewlineBelow,
     VimEnterInsertNewlineAbove,
     VimEnterNormal,
+    VimEnterVisual,
+    VimEnterVisualLine,
     VimEnterCommand,
     VimCommandChanged(String),
     VimCommandSubmit,

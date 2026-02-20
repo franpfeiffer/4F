@@ -121,6 +121,7 @@ fn handle_event(raw_event: subscription::Event, vim_enabled: bool, vim_mode: Vim
                                 'i' => Some(Message::VimEnterInsert),
                                 'a' => Some(Message::VimEnterInsertAppend),
                                 'o' => Some(Message::VimEnterInsertNewlineBelow),
+                                'v' => Some(Message::VimEnterVisual),
                                 _ => Some(Message::VimKey(c)),
                             };
                         }
@@ -142,11 +143,49 @@ fn handle_event(raw_event: subscription::Event, vim_enabled: bool, vim_mode: Vim
                                 'J' => Some(Message::VimKey('J')),
                                 'D' => Some(Message::VimKey('D')),
                                 'C' => Some(Message::VimKey('C')),
+                                'V' => Some(Message::VimEnterVisualLine),
                                 ':' => Some(Message::VimEnterCommand),
                                 _ => None,
                             };
                         }
                     }
+                    _ => {}
+                }
+                return None;
+            }
+            return None;
+        }
+
+        if vim_enabled && (vim_mode == VimMode::Visual || vim_mode == VimMode::VisualLine) {
+            if modifiers.is_empty() {
+                match key.as_ref() {
+                    keyboard::Key::Named(keyboard::key::Named::Escape) => {
+                        return Some(Message::VimEnterNormal);
+                    }
+                    keyboard::Key::Character(ch) => {
+                        if let Some(c) = ch.chars().next() {
+                            return Some(Message::VimKey(c));
+                        }
+                    }
+                    _ => {}
+                }
+                return None;
+            }
+            if modifiers.shift() && !modifiers.control() {
+                match modified_key.as_ref() {
+                    keyboard::Key::Character(ch) => {
+                        if let Some(c) = ch.chars().next() {
+                            return Some(Message::VimKey(c));
+                        }
+                    }
+                    _ => {}
+                }
+                return None;
+            }
+            if modifiers.control() {
+                match key.as_ref() {
+                    keyboard::Key::Character("d") => return Some(Message::VimKey('\x04')),
+                    keyboard::Key::Character("u") => return Some(Message::VimKey('\x15')),
                     _ => {}
                 }
                 return None;
